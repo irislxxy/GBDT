@@ -64,44 +64,31 @@ class BinomialDeviance(ClassificationLossFunction):
         loss = -2.0 * ((y * f) - f.apply(lambda x: exp(1+x))).mean()
         return loss
 
-class AbstractBaseGradientBoosting(metaclass=abc.ABCMeta):
-    def __init__(self):
-        pass
 
-    def fit(self, datasets):
-        pass
+class GBDT:
 
-    def predict(self, data):
-        pass
-
-
-class BaseGradientBoosting(AbstractBaseGradientBoosting):
-
-    def __init__(self, loss, learning_rate, max_iter, max_depth, min_samples_split=2):
-        super().__init__()
-        self.loss = loss
+    def __init__(self, learning_rate, max_iter, max_depth, min_samples_split=2, loss_type='binary-classification'):
         self.learning_rate = learning_rate
         self.max_iter = max_iter
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
-        self.features = None
+        self.loss_type = loss_type
+        self.loss = None
         self.trees = {}
-        self.f_0 = {}
-
+        
     def fit(self, datasets):
+        if self.loss_type == 'binary-classification':
+            self.loss = BinomialDeviance()
+
         m = 1
         for i in range(self.max_iter):
             for j in range(len(datasets)):
                 data = datasets[j].copy()
-                print(data.columns)
-
                 # 删除label，得到特征名称
-                self.features = list(data.drop('label', axis = 1).columns)
-                print(self.features)
+                features = list(data.drop('label', axis = 1).columns)
 
                 # 初始化f_{0}
                 self.f_0 = self.loss.initialize(data)
-
                 # 计算f_{m-1}
                 if m == 1:
                     pass
@@ -112,13 +99,11 @@ class BaseGradientBoosting(AbstractBaseGradientBoosting):
                     for iter in range(1,m):
                         for leaf_node in self.trees[iter].leaf_nodes:
                             data.loc[leaf_node.data_index, f_m_name] += self.learning_rate * leaf_node.predict_value
-
                 # 计算残差r_{m}
                 self.loss.calculate_residual(data, m)
-                print(data.columns)
                 # 拟合残差学习一个回归树
                 target_name = 'r_' + str(m)
-                tree = Tree(data, self.max_depth, self.min_samples_split, self.features, self.loss, target_name)
+                tree = Tree(data, self.max_depth, self.min_samples_split, features, self.loss, target_name)
                 self.trees[m] = tree
                 # f_{m} = f_{m-1} + T_{m} 
                 self.loss.update_f_value(data, self.trees, m, self.learning_rate)
@@ -128,11 +113,6 @@ class BaseGradientBoosting(AbstractBaseGradientBoosting):
 
                 m += 1
             
-
-class GradientBoostingBinaryClassifier(BaseGradientBoosting):
-    def __init__(self, learning_rate, max_iter, max_depth, min_samples_split=2):
-        super().__init__(BinomialDeviance(), learning_rate, max_iter, max_depth, min_samples_split)
-
     def predict(self, data, type):
         data['f_0'] = self.f_0
         for iter in range(1, len(self.trees)+1):
