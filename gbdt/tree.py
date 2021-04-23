@@ -27,6 +27,10 @@ class Node:
 
 class Tree:
     def __init__(self, data, max_depth, min_samples_split, features, loss, target_name):
+
+        self.tree_in_vector = []
+        self.lookup = {}
+
         self.loss = loss
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
@@ -53,9 +57,9 @@ class Tree:
             split_value = None
             left_index_of_now_data = None
             right_index_of_now_data = None
-            # print('--树的深度：%d' % depth)
+            # 划分特征
             for feature in self.features:
-                # print('----划分特征：', feature)
+                # 划分值
                 feature_values = now_data[feature].unique()
                 for fea_val in feature_values:
                     # 尝试划分
@@ -64,15 +68,12 @@ class Tree:
                     left_se = calculate_se(now_data[left_index][self.target_name])
                     right_se = calculate_se(now_data[right_index][self.target_name])
                     sum_se = left_se + right_se
-                    # print('------划分值:%.3f,左节点损失:%.3f,右节点损失:%.3f,总损失:%.3f' % (fea_val, left_se, right_se, sum_se))
                     if se is None or sum_se < se:
                         split_feature = feature
                         split_value = fea_val
                         se = sum_se
                         left_index_of_now_data = left_index
                         right_index_of_now_data = right_index
-            # print('--最佳划分特征：', split_feature)
-            # print('--最佳划分值：', split_value)
 
             node = Node(remain_index, split_feature, split_value, deep=depth)
 
@@ -100,9 +101,24 @@ class Tree:
                         del right_index_of_now_data[0]
                 else:
                     right_index_of_all_data.append(False)
-
+            
             node.left_child = self.build_tree(data, left_index_of_all_data, depth + 1)
             node.right_child = self.build_tree(data, right_index_of_all_data, depth + 1)
+
+            left_node = node.left_child
+            right_node = node.right_child     
+            left_node_id = self.lookup[left_node]
+            right_node_id = self.lookup[right_node]
+
+            self.lookup[node] = len(self.lookup)
+            self.tree_in_vector.extend([self.lookup[node],                       # node_id
+                                        0,                                       # is_leaf
+                                        self.features.index(node.split_feature), # split_feature
+                                        split_value,                             # split_value
+                                        left_node_id,                            # left_node_id
+                                        right_node_id,                           # right_node_id
+                                        None])                                   # predict_value
+
             return node
         
         else:
@@ -113,6 +129,10 @@ class Tree:
                 label_name = 'label'
             node.update_predict_value(now_data[self.target_name], now_data[label_name])
             self.leaf_nodes.append(node)
+
+            self.lookup[node] = len(self.lookup)
+            self.tree_in_vector.extend([self.lookup[node],1,None,None,None,None,node.predict_value])
+
             return node
 
 
