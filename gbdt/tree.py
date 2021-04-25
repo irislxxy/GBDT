@@ -13,16 +13,6 @@ class Node:
 
     def update_predict_value(self, targets, y):
         self.predict_value = self.loss.update_leaf_values(targets, y)
-        # print('叶子节点预测值：', self.predict_value)
-
-    def get_predict_value(self, instance):
-        if self.is_leaf:
-            # print('predict:', self.predict_value)
-            return self.predict_value
-        if instance[self.split_feature] < self.split_value:
-            return self.left_child.get_predict_value(instance)
-        else:
-            return self.right_child.get_predict_value(instance)
 
 
 class Tree:
@@ -102,8 +92,8 @@ class Tree:
                 else:
                     right_index_of_all_data.append(False)
             
-            node.left_child = self.build_tree(data, left_index_of_all_data, depth + 1)
-            node.right_child = self.build_tree(data, right_index_of_all_data, depth + 1)
+            node.left_child = self.build_tree(data, left_index_of_all_data, depth+1)
+            node.right_child = self.build_tree(data, right_index_of_all_data, depth+1)
 
             left_node = node.left_child
             right_node = node.right_child     

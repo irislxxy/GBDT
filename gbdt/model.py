@@ -17,7 +17,7 @@ class ClassificationLossFunction(metaclass=abc.ABCMeta):
         """计算残差"""
 
     @abc.abstractmethod
-    def update_f_value(self, data, trees, iter, learning_rate):
+    def update_f_value(self, data, tree, iter, learning_rate):
         """更新f_{m}"""
 
     @abc.abstractmethod
@@ -42,14 +42,14 @@ class BinomialDeviance(ClassificationLossFunction):
         r_name = 'r_' + str(iter)
         f_prev_name = 'f_' + str(iter - 1)
         data[r_name] = data['label'] - 1 / (1 + data[f_prev_name].apply(lambda x: exp(-x)))
-
-    def update_f_value(self, data, trees, iter, learning_rate):
+        
+    def update_f_value(self, data, tree, iter, learning_rate):
         f_prev_name = 'f_' + str(iter - 1)
         f_m_name = 'f_' + str(iter)
-        data[f_m_name] = data[f_prev_name]
-        for leaf_node in trees[iter].leaf_nodes:
-            data.loc[leaf_node.data_index, f_m_name] += learning_rate * leaf_node.predict_value
-
+        for leaf_node in tree.leaf_nodes:
+            data.loc[leaf_node.data_index, f_m_name] = data.loc[leaf_node.data_index, f_prev_name] + \
+                                                       learning_rate * leaf_node.predict_value
+                            
     def update_leaf_values(self, targets, y):
         numerator = targets.sum()
         if numerator == 0:
@@ -64,6 +64,35 @@ class BinomialDeviance(ClassificationLossFunction):
         loss = -2.0 * ((y * f) - f.apply(lambda x: exp(1+x))).mean()
         return loss
 
+# 基于本地数据跑n颗树
+def get_predict_value(data, trees_in_matrix):
+    n_trees = len(trees_in_matrix) + 1
+    for t in range(n_trees):
+        tree_in_vector = trees_in_matrix[t-1]
+        
+        # 将vector树转化为dic
+        tree_nodes = {}
+        n_nodes = int(len(tree_in_vector)/7)
+        for node in range(n_nodes):
+            tree_nodes[node] = {'is_leaf': tree_in_vector[node*7+1],
+                                'split_feature': tree_in_vector[node*7+2],
+                                'split_value': tree_in_vector[node*7+3],
+                                'left_node_id': tree_in_vector[node*7+4],  
+                                'right_node_id': tree_in_vector[node*7+5],
+                                'predict_value': tree_in_vector[node*7+6]}
+                        
+        # 跑本地数据
+        t_name = 't_' + str(t)
+        data[t_name] = None
+        for i in data.index:
+            next_node = tree_nodes[len(tree_nodes)-1] # root_node
+            while next_node['is_leaf'] == 0:
+                if data.loc[i,data.columns[next_node['split_feature']]] < next_node['split_value']:
+                    next_node = tree_nodes[next_node['left_node_id']]
+                else:
+                    next_node = tree_nodes[next_node['right_node_id']]
+            data.loc[i,t_name] = next_node['predict_value']
+        
 
 class GBDT:
 
@@ -74,7 +103,9 @@ class GBDT:
         self.min_samples_split = min_samples_split
         self.loss_type = loss_type
         self.loss = None
-        self.trees = {}
+
+        # self.trees = {}
+        self.trees_in_matrix = []
         
     def fit(self, datasets):
         if self.loss_type == 'binary-classification':
@@ -89,24 +120,38 @@ class GBDT:
 
                 # 初始化f_{0}
                 self.f_0 = self.loss.initialize(data)
+                
                 # 计算f_{m-1}
                 if m == 1:
                     pass
                 else:
-                    # f_{m-1} = T_{1} + ... + T_{m-1}
+                    # 本地数据跑所有树
+                    get_predict_value(data, self.trees_in_matrix)
+
+                    # f_{m-1} = f_{0} + T_{1} + ... + T_{m-1}
                     f_m_name = 'f_' + str(m-1)
                     data[f_m_name] = data['f_0']
-                    for iter in range(1,m):
-                        for leaf_node in self.trees[iter].leaf_nodes:
-                            data.loc[leaf_node.data_index, f_m_name] += self.learning_rate * leaf_node.predict_value
+                    for t in range(1,m):
+                        t_m_name = 't_' + str(t)
+                        data[f_m_name] += self.learning_rate * data[t_m_name]
+
                 # 计算残差r_{m}
                 self.loss.calculate_residual(data, m)
+
                 # 拟合残差学习一个回归树
                 target_name = 'r_' + str(m)
                 tree = Tree(data, self.max_depth, self.min_samples_split, features, self.loss, target_name)
-                self.trees[m] = tree
+
+                # 传递树的class
+                # self.trees[m] = tree
+                
+                # 传递树的matrix - PyTorch
+                self.trees_in_matrix.append(tree.tree_in_vector)
+                print(tree.tree_in_vector)
+
                 # f_{m} = f_{m-1} + T_{m} 
-                self.loss.update_f_value(data, self.trees, m, self.learning_rate)
+                self.loss.update_f_value(data, tree, m, self.learning_rate)
+                
                 # 计算训练损失
                 train_loss = self.loss.get_train_loss(data['label'], data['f_' + str(m)])
                 print('iter%d party%d tree%d: train loss=%f \n' % (i+1, j+1, m, train_loss))
@@ -114,14 +159,8 @@ class GBDT:
                 m += 1
             
     def predict(self, data, type):
-        data['f_0'] = self.f_0
-        for iter in range(1, len(self.trees)+1):
-            f_prev_name = 'f_' + str(iter - 1)
-            f_m_name = 'f_' + str(iter)
-            data[f_m_name] = data[f_prev_name] + \
-                             self.learning_rate * \
-                             data.apply(lambda x: self.trees[iter].root_node.get_predict_value(x), axis=1)
-        data['predict_proba'] = data[f_m_name].apply(lambda x: 1 / (1 + exp(-x)))
+        get_predict_value(data, self.trees_in_matrix)
+        data['predict_proba'] = data.iloc[:,-1].apply(lambda x: 1 / (1 + exp(-x)))
         data['predict_label'] = data['predict_proba'].apply(lambda x: 1 if x >= 0.5 else 0)
 
         if type == 'proba':
