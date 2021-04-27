@@ -1,6 +1,7 @@
 import abc
 from math import exp, log
 import pandas as pd
+import torch
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import auc, roc_auc_score
 from gbdt.tree import Tree
@@ -66,13 +67,13 @@ class BinomialDeviance(ClassificationLossFunction):
 
 # 基于本地数据跑n颗树
 def get_predict_value(data, trees_in_matrix):
-    n_trees = len(trees_in_matrix) + 1
+    n_trees = len(trees_in_matrix)
     for t in range(n_trees):
-        tree_in_vector = trees_in_matrix[t-1]
-        
+        tree_in_vector = trees_in_matrix[t]
         # 将vector树转化为dic
         tree_nodes = {}
-        n_nodes = int(len(tree_in_vector)/7)
+        n_nodes = int(tree_in_vector[0])
+        tree_in_vector = tree_in_vector[1:].tolist()
         for node in range(n_nodes):
             tree_nodes[node] = {'is_leaf': tree_in_vector[node*7+1],
                                 'split_feature': tree_in_vector[node*7+2],
@@ -80,9 +81,8 @@ def get_predict_value(data, trees_in_matrix):
                                 'left_node_id': tree_in_vector[node*7+4],  
                                 'right_node_id': tree_in_vector[node*7+5],
                                 'predict_value': tree_in_vector[node*7+6]}
-                        
         # 跑本地数据
-        t_name = 't_' + str(t)
+        t_name = 't_' + str(t+1)
         data[t_name] = None
         for i in data.index:
             next_node = tree_nodes[len(tree_nodes)-1] # root_node
@@ -146,8 +146,20 @@ class GBDT:
                 # self.trees[m] = tree
                 
                 # 传递树的matrix - PyTorch
-                self.trees_in_matrix.append(tree.tree_in_vector)
-                print(tree.tree_in_vector)
+                n_nodes = int(len(tree.tree_in_vector)/7)
+                tree_with_count_prefix = [n_nodes] + tree.tree_in_vector
+                print(tree_with_count_prefix)
+                n_trees = len(self.trees_in_matrix)
+                if n_trees == 0: 
+                    self.trees_in_matrix = torch.tensor([tree_with_count_prefix])
+                else:
+                    pre_col = self.trees_in_matrix.shape[1]
+                    new_col = n_nodes*7+1 
+                    max_col = new_col if new_col > pre_col else pre_col
+                    temp = torch.zeros(n_trees+1, max_col)
+                    temp[0:n_trees,0:pre_col] = self.trees_in_matrix
+                    temp[-1,0:new_col] = torch.tensor(tree_with_count_prefix)
+                    self.trees_in_matrix = temp
 
                 # f_{m} = f_{m-1} + T_{m} 
                 self.loss.update_f_value(data, tree, m, self.learning_rate)
@@ -157,7 +169,9 @@ class GBDT:
                 print('iter%d party%d tree%d: train loss=%f \n' % (i+1, j+1, m, train_loss))
 
                 m += 1
-            
+        
+        print(self.trees_in_matrix)
+
     def predict(self, data, type):
         get_predict_value(data, self.trees_in_matrix)
         data['predict_proba'] = data.iloc[:,-1].apply(lambda x: 1 / (1 + exp(-x)))

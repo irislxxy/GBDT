@@ -34,8 +34,8 @@ class Tree:
         """
         此处有三个树继续生长的条件：
             1、深度没有到达最大 depth < self.max_depth - 1
-            2、点样本数 >= min_samples_split
-            3:、此节点上的样本的target_name值不一样（如果值一样说明已经划分得很好了，不需要再分）
+            2、节点样本数 >= min_samples_split
+            3、节点样本的target_name值不一样（如果值一样说明已经划分得很好了，不需要再分）
         """
         now_data = data[remain_index]
 
@@ -107,7 +107,7 @@ class Tree:
                                         split_value,                             # split_value
                                         left_node_id,                            # left_node_id
                                         right_node_id,                           # right_node_id
-                                        None])                                   # predict_value
+                                        0])                                      # predict_value - should be None
 
             return node
         
@@ -121,7 +121,7 @@ class Tree:
             self.leaf_nodes.append(node)
 
             self.lookup[node] = len(self.lookup)
-            self.tree_in_vector.extend([self.lookup[node],1,None,None,None,None,node.predict_value])
+            self.tree_in_vector.extend([self.lookup[node],1,0,0,0,0,node.predict_value])
 
             return node
 
